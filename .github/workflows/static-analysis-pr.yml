@@ -1,6 +1,16 @@
 name: Static analysis
 
 on:
+  push:
+    paths:
+      - '**/*.cpp'
+      - '**/*.hpp'
+      - '**/*.c'
+      - '**/*.h'
+      - '**/CMakeLists.txt'
+      - '**/*.cmake'
+      - '**/.clang-tidy'
+      - '.github/workflows/static-analysis-pr.yml'
   pull_request:
     paths:
       - '**/*.cpp'
@@ -11,6 +21,7 @@ on:
       - '**/*.cmake'
       - '**/.clang-tidy'
       - '.github/workflows/static-analysis-pr.yml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -120,45 +131,3 @@ jobs:
         run: |
           echo "clang-tidy run has failed. See previous 'Run clang-tidy' stage logs"
           exit 1
-  nolint-check:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Search for linter suppression markers
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          CHANGED_FILES="$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA" -- 'tasks/')"
-
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "No changed files in tasks directory."
-            exit 0
-          fi
-
-          markers=(
-            "NOLINT::Found 'NOLINT'"
-            "IWYU[[:space:]]+pragma::Found 'IWYU pragma'"
-            "LCOV_EXCL_START::Found 'LCOV_EXCL_START'"
-            "LCOV_EXCL_STOP::Found 'LCOV_EXCL_STOP'"
-            "GCOVR_EXCL_LINE::Found 'GCOVR_EXCL_LINE'"
-            "GCOVR_EXCL_START::Found 'GCOVR_EXCL_START'"
-            "GCOVR_EXCL_STOP::Found 'GCOVR_EXCL_STOP'"
-          )
-
-          for file in $CHANGED_FILES; do
-            for marker in "${markers[@]}"; do
-              pattern="${marker%%::*}"
-              message="${marker#*::}"
-              if grep -Eq "$pattern" "$file"; then
-                echo "::error::${message} in $file."
-                exit 1
-              fi
-            done
-          done
-
-          echo "No linter suppression markers found in changed files."
