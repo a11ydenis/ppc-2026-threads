@@ -1,9 +1,19 @@
 name: Static analysis
 
 on:
+  push:
+    paths:
+      - "**/*.cpp"
+      - "**/*.hpp"
+      - "**/*.c"
+      - "**/*.h"
+      - "**/CMakeLists.txt"
+      - "**/*.cmake"
+      - "**/.clang-tidy"
+      - ".github/workflows/static-analysis-pr.yml"
   pull_request:
     paths-ignore:
-      - '**/*.md'
+      - "**/*.md"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
