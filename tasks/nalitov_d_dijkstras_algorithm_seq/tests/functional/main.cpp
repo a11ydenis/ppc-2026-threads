@@ -28,8 +28,8 @@ class NalitovDDijkstrasAlgorithmSeqFuncTests : public ppc::util::BaseRunFuncTest
   }
 
   bool CheckTestOutputData(OutType &output_data) final {
-    double tol = 5.0 / std::sqrt(static_cast<double>(input_data_.num_samples));
-    return std::abs(output_data - ExactValue(input_data_)) <= tol;
+    OutType expected_output = input_data_ * (input_data_ - 1) / 2;
+    return expected_output == output_data;
   }
 
   InType GetTestInputData() final {
@@ -46,7 +46,7 @@ TEST_P(NalitovDDijkstrasAlgorithmSeqFuncTests, AlgorithmIntegration) {
   ExecuteTest(GetParam());
 }
 
-const std::array<TestType, 3> kTestParam = {std::make_tuple(5, "5"), std::make_tuple(7, "7"), std::make_tuple(9, "9")};
+const std::array<TestType, 3> kTestParam = {std::make_tuple(2, "2"), std::make_tuple(4, "4"), std::make_tuple(6, "6")};
 
 const auto kTestTasksList =
     ppc::util::AddFuncTask<NalitovDDijkstrasAlgorithmSeq, InType>(kTestParam, PPC_SETTINGS_nalitov_d_dijkstras_algorithm_seq);
