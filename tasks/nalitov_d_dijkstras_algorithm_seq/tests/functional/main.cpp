@@ -1,12 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <cmath>
 #include <cstddef>
-#include <ostream>
 #include <string>
 #include <tuple>
-#include <vector>
 
 #include "nalitov_d_dijkstras_algorithm_seq/common/include/common.hpp"
 #include "nalitov_d_dijkstras_algorithm_seq/seq/include/ops_seq.hpp"
@@ -48,12 +45,13 @@ TEST_P(NalitovDDijkstrasAlgorithmSeqFuncTests, AlgorithmIntegration) {
 
 const std::array<TestType, 3> kTestParam = {std::make_tuple(2, "2"), std::make_tuple(4, "4"), std::make_tuple(6, "6")};
 
-const auto kTestTasksList =
-    ppc::util::AddFuncTask<NalitovDDijkstrasAlgorithmSeq, InType>(kTestParam, PPC_SETTINGS_nalitov_d_dijkstras_algorithm_seq);
+const auto kTestTasksList = ppc::util::AddFuncTask<NalitovDDijkstrasAlgorithmSeq, InType>(
+    kTestParam, PPC_SETTINGS_nalitov_d_dijkstras_algorithm_seq);
 
 const auto kGtestValues = ppc::util::ExpandToValues(kTestTasksList);
 
-const auto kPerfTestName = NalitovDDijkstrasAlgorithmSeqFuncTests::PrintFuncTestName<NalitovDDijkstrasAlgorithmSeqFuncTests>;
+const auto kPerfTestName =
+    NalitovDDijkstrasAlgorithmSeqFuncTests::PrintFuncTestName<NalitovDDijkstrasAlgorithmSeqFuncTests>;
 
 INSTANTIATE_TEST_SUITE_P(DijkstraAlgorithmTests, NalitovDDijkstrasAlgorithmSeqFuncTests, kGtestValues, kPerfTestName);
 
