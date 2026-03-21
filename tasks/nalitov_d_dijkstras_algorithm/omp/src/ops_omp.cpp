@@ -47,7 +47,8 @@ InType SelectNextVertexOmp(std::vector<InType> &distances, std::vector<char> &pr
   std::vector<InType> thread_best_vertex(worker_count, -1);
   InType selected_vertex = -1;
 
-#pragma omp parallel default(none) shared(vertex_count, distances, processed, thread_best_distance, thread_best_vertex)
+#pragma omp parallel default(none) shared(vertex_count, distances, processed, thread_best_distance, \
+                                              thread_best_vertex, worker_count, selected_vertex, k_infinity)
   {
     const int tid = omp_get_thread_num();
     InType best_distance = std::numeric_limits<InType>::max();
