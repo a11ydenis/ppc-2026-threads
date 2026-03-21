@@ -3,6 +3,7 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -69,12 +70,12 @@ InType SelectNextVertexOmp(std::vector<InType> &distances, std::vector<char> &pr
 #pragma omp single
     {
       InType best_global_distance = std::numeric_limits<InType>::max();
-      for (int t = 0; t < worker_count; ++t) {
-        if (thread_best_vertex[t] != -1 &&
-            (thread_best_distance[t] < best_global_distance ||
-             (thread_best_distance[t] == best_global_distance && thread_best_vertex[t] < selected_vertex))) {
-          best_global_distance = thread_best_distance[t];
-          selected_vertex = thread_best_vertex[t];
+      for (int thread_idx = 0; thread_idx < worker_count; ++thread_idx) {
+        if (thread_best_vertex[thread_idx] != -1 && (thread_best_distance[thread_idx] < best_global_distance ||
+                                                     (thread_best_distance[thread_idx] == best_global_distance &&
+                                                      thread_best_vertex[thread_idx] < selected_vertex))) {
+          best_global_distance = thread_best_distance[thread_idx];
+          selected_vertex = thread_best_vertex[thread_idx];
         }
       }
       if (selected_vertex != -1 && best_global_distance != k_infinity) {
@@ -110,7 +111,7 @@ void UpdateNeighborsOmp(InType anchor_vertex, std::vector<InType> &distances, co
 }
 
 OutType AccumulateReachableDistanceOmp(const std::vector<InType> &distances, InType k_infinity) {
-  long long aggregated_distance = 0;
+  int64_t aggregated_distance = 0;
   const auto vertex_count = static_cast<InType>(distances.size());
 #pragma omp parallel for reduction(+ : aggregated_distance) default(none) shared(distances, vertex_count, k_infinity)
   for (InType vertex_idx = 0; vertex_idx < vertex_count; ++vertex_idx) {
