@@ -34,8 +34,10 @@ TEST_P(NalitovDDijkstrasAlgorithmPerfTests, RunPerfModes) {
 
 namespace {
 
-const auto kSeqPerfTasks = ppc::util::MakeAllPerfTasks<InType, NalitovDDijkstrasAlgorithmSeq>(PPC_SETTINGS_nalitov_d_dijkstras_algorithm);
-const auto kOmpPerfTasks = ppc::util::MakeAllPerfTasks<InType, NalitovDDijkstrasAlgorithmOmp>(PPC_SETTINGS_nalitov_d_dijkstras_algorithm);
+const auto kSeqPerfTasks =
+    ppc::util::MakeAllPerfTasks<InType, NalitovDDijkstrasAlgorithmSeq>(PPC_SETTINGS_nalitov_d_dijkstras_algorithm);
+const auto kOmpPerfTasks =
+    ppc::util::MakeAllPerfTasks<InType, NalitovDDijkstrasAlgorithmOmp>(PPC_SETTINGS_nalitov_d_dijkstras_algorithm);
 const auto kAllPerfTasks = std::tuple_cat(kSeqPerfTasks, kOmpPerfTasks);
 
 const auto kGtestValues = ppc::util::TupleToGTestValues(kAllPerfTasks);

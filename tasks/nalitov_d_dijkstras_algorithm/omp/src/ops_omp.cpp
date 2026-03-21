@@ -69,9 +69,9 @@ InType SelectNextVertexOmp(std::vector<InType> &distances, std::vector<char> &pr
     {
       InType best_global_distance = std::numeric_limits<InType>::max();
       for (int t = 0; t < worker_count; ++t) {
-        if (thread_best_vertex[t] != -1 && (thread_best_distance[t] < best_global_distance ||
-                                            (thread_best_distance[t] == best_global_distance &&
-                                             thread_best_vertex[t] < selected_vertex))) {
+        if (thread_best_vertex[t] != -1 &&
+            (thread_best_distance[t] < best_global_distance ||
+             (thread_best_distance[t] == best_global_distance && thread_best_vertex[t] < selected_vertex))) {
           best_global_distance = thread_best_distance[t];
           selected_vertex = thread_best_vertex[t];
         }
@@ -91,7 +91,8 @@ void UpdateNeighborsOmp(InType anchor_vertex, std::vector<InType> &distances, co
   const auto vertex_count = static_cast<InType>(distances.size());
   const InType anchor_distance = distances[anchor_vertex];
 
-#pragma omp parallel for default(none) shared(anchor_vertex, distances, processed, vertex_count, k_infinity, anchor_distance)
+#pragma omp parallel for default(none) \
+    shared(anchor_vertex, distances, processed, vertex_count, k_infinity, anchor_distance)
   for (InType neighbor = 0; neighbor < vertex_count; ++neighbor) {
     if (processed[neighbor] == 0 && neighbor != anchor_vertex) {
       const InType edge_weight = GetEdgeWeight(anchor_vertex, neighbor);

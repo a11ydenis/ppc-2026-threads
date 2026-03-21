@@ -54,8 +54,7 @@ const auto kTestTasksList = std::tuple_cat(kTestTasksListSeq, kTestTasksListOmp)
 
 const auto kGtestValues = ppc::util::ExpandToValues(kTestTasksList);
 
-const auto kPerfTestName =
-    NalitovDDijkstrasAlgorithmFuncTests::PrintFuncTestName<NalitovDDijkstrasAlgorithmFuncTests>;
+const auto kPerfTestName = NalitovDDijkstrasAlgorithmFuncTests::PrintFuncTestName<NalitovDDijkstrasAlgorithmFuncTests>;
 
 INSTANTIATE_TEST_SUITE_P(DijkstraAlgorithmTests, NalitovDDijkstrasAlgorithmFuncTests, kGtestValues, kPerfTestName);
 
