@@ -2,14 +2,13 @@
 
 #include <omp.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
-#include <memory>
 #include <queue>
-#include <ranges>
 #include <utility>
 #include <vector>
 
@@ -158,7 +157,8 @@ bool NalitovDDijkstrasAlgorithmOmp::PreProcessingImpl() {
   const std::size_t arc_count = in.arcs.size();
 
 #pragma omp parallel for default(none) schedule(guided) num_threads(omp_threads) shared(in, g, row_next, arc_count)
-  for (std::ptrdiff_t ei = 0; ei < static_cast<std::ptrdiff_t>(arc_count); ++ei) {
+  for (std::ptrdiff_t ei = 0; ei < static_cast<std::ptrdiff_t>(arc_count);
+       ++ei) {  // NOLINT(modernize-use-integer-sign-comparison)
     const Arc &a = in.arcs[static_cast<std::size_t>(ei)];
     const auto u = static_cast<std::size_t>(a.from);
     const std::size_t slot = row_next[u].fetch_add(1, std::memory_order_relaxed);

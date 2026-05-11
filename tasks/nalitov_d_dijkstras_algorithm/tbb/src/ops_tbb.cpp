@@ -9,10 +9,8 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
-#include <memory>
 #include <mutex>
 #include <queue>
-#include <ranges>
 #include <utility>
 #include <vector>
 
@@ -37,6 +35,8 @@ struct QueueItem {
     return b < a;
   }
 };
+
+using DijkstraHeap = std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<>>;
 
 bool SafeAdd(std::int64_t acc, Cost value, std::int64_t &result) {
   const auto v = static_cast<std::int64_t>(value);
@@ -74,62 +74,69 @@ void BuildGraphParallel(const InType &input, OutgoingTable &graph) {
   tbb::parallel_for(tbb::blocked_range<std::size_t>(0, arc_count), [&](const tbb::blocked_range<std::size_t> &range) {
     for (std::size_t i = range.begin(); i < range.end(); ++i) {
       const Arc &arc = input.arcs[i];
-      const std::size_t from = static_cast<std::size_t>(arc.from);
+      const auto from = static_cast<std::size_t>(arc.from);
       const std::size_t pos = slot_counter[from].fetch_add(1, std::memory_order_relaxed);
       g[from][pos] = {arc.to, arc.weight};
     }
   });
 }
 
+void RelaxEdgesParallel(Cost d_u, const std::vector<std::pair<NodeId, Cost>> &out_edges, std::vector<Cost> &distance,
+                        std::vector<std::pair<NodeId, Cost>> &updates) {
+  const auto edge_cnt = out_edges.size();
+  std::mutex upd_mutex;
+
+  tbb::parallel_for(tbb::blocked_range<std::size_t>(0, edge_cnt), [&](const tbb::blocked_range<std::size_t> &r) {
+    for (std::size_t j = r.begin(); j < r.end(); ++j) {
+      const auto &[v, w] = out_edges[j];
+      if (d_u <= kInf - w) {
+        const Cost cand = d_u + w;
+        if (cand < distance[v]) {
+          std::scoped_lock lock(upd_mutex);
+          updates.emplace_back(v, cand);
+        }
+      }
+    }
+  });
+}
+
+void ApplyUpdates(const std::vector<std::pair<NodeId, Cost>> &updates, std::vector<Cost> &distance,
+                  DijkstraHeap &heap) {
+  for (const auto &[v, cand] : updates) {
+    if (cand < distance[v]) {
+      distance[v] = cand;
+      heap.push({cand, v});
+    }
+  }
+}
+
 std::vector<Cost> ComputeShortestPaths(NodeId source, const OutgoingTable &graph) {
   const auto vertex_count = static_cast<NodeId>(graph.size());
   std::vector<Cost> distance(vertex_count, kInf);
-  std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<>> heap;
+  DijkstraHeap heap;
+  std::vector<char> visited(vertex_count, 0);
 
   distance[source] = 0;
   heap.push({0, source});
 
-  std::vector<char> visited(vertex_count, 0);
-
   while (!heap.empty()) {
-    const QueueItem top = heap.top();
+    const auto [d_u, u] = heap.top();
     heap.pop();
-    const Cost d_u = top.dist;
-    const NodeId u = top.node;
 
-    if (visited[u]) {
+    if (visited[u] != 0) {
       continue;
     }
     visited[u] = 1;
 
     const auto &out_edges = graph[u];
-    const auto edge_cnt = out_edges.size();
-
-    if (edge_cnt > 0) {
-      std::vector<std::pair<NodeId, Cost>> updates;
-      updates.reserve(edge_cnt);
-      std::mutex upd_mutex;
-
-      tbb::parallel_for(tbb::blocked_range<std::size_t>(0, edge_cnt), [&](const tbb::blocked_range<std::size_t> &r) {
-        for (std::size_t j = r.begin(); j < r.end(); ++j) {
-          const auto &[v, w] = out_edges[j];
-          if (d_u <= kInf - w) {
-            const Cost cand = d_u + w;
-            if (cand < distance[v]) {
-              std::lock_guard<std::mutex> lock(upd_mutex);
-              updates.emplace_back(v, cand);
-            }
-          }
-        }
-      });
-
-      for (const auto &[v, cand] : updates) {
-        if (cand < distance[v]) {
-          distance[v] = cand;
-          heap.push({cand, v});
-        }
-      }
+    if (out_edges.empty()) {
+      continue;
     }
+
+    std::vector<std::pair<NodeId, Cost>> updates;
+    updates.reserve(out_edges.size());
+    RelaxEdgesParallel(d_u, out_edges, distance, updates);
+    ApplyUpdates(updates, distance, heap);
   }
 
   return distance;
