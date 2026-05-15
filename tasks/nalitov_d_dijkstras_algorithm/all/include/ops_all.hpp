@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -23,18 +22,16 @@ class NalitovDDijkstrasAlgorithmALL : public BaseTask {
   bool PostProcessingImpl() override;
 
   using OutgoingTable = std::vector<std::vector<std::pair<NodeId, Cost>>>;
-
   OutgoingTable graph_;
-  std::vector<Cost> dist_;
-  std::vector<char> visited_;
 
-  int rank_{};
-  int size_{};
   int n_{};
   int source_{};
-
+  int rank_{};
+  int size_{};
   int local_start_{};
   int local_count_{};
+  std::vector<Cost> local_dist_;
+  std::vector<char> local_visited_;
 };
 
 }  // namespace nalitov_d_dijkstras_algorithm

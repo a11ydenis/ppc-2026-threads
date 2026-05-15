@@ -5,9 +5,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <utility>
 #include <vector>
 
@@ -17,32 +17,80 @@ namespace nalitov_d_dijkstras_algorithm {
 
 namespace {
 
-bool CheckedSum(std::int64_t acc, Cost addend, std::int64_t &out) {
-  const auto x = static_cast<std::int64_t>(addend);
-  if (x > 0 && acc > std::numeric_limits<std::int64_t>::max() - x) {
-    return false;
-  }
-  if (x < 0 && acc < std::numeric_limits<std::int64_t>::min() - x) {
-    return false;
-  }
-  out = acc + x;
-  return true;
-}
+struct NodePayload {
+  int cost;
+  int vtx;
+};
 
-void MinDistVertexOp(void *in_buf, void *inout_buf, const int *len, MPI_Datatype * /*dtype*/) {
-  const auto *in = static_cast<const int *>(in_buf);
-  auto *inout = static_cast<int *>(inout_buf);
-  for (int i = 0; i < *len; i += 2) {
-    const int a_cost = in[i];
-    const int a_vtx = in[i + 1];
-    const int b_cost = inout[i];
-    const int b_vtx = inout[i + 1];
-    const bool a_wins = (a_cost < b_cost) || (a_cost == b_cost && a_vtx != -1 && (b_vtx == -1 || a_vtx < b_vtx));
-    if (a_wins) {
-      inout[i] = a_cost;
-      inout[i + 1] = a_vtx;
+NodePayload FindLocalMin(const std::vector<Cost> &dist, const std::vector<char> &visited, int start_idx, int count,
+                         int threads) {
+  int best_c = kInf;
+  int best_v = -1;
+
+#pragma omp parallel num_threads(threads) default(none) shared(dist, visited, start_idx, count, best_c, best_v)
+  {
+    int thr_c = kInf;
+    int thr_v = -1;
+
+#pragma omp for nowait
+    for (int i = 0; i < count; ++i) {
+      if (visited[static_cast<size_t>(i)] == 0 && dist[static_cast<size_t>(i)] < thr_c) {
+        thr_c = dist[static_cast<size_t>(i)];
+        thr_v = start_idx + i;
+      }
+    }
+
+#pragma omp critical
+    {
+      if (thr_c < best_c || (thr_c == best_c && thr_v != -1 && (best_v == -1 || thr_v < best_v))) {
+        best_c = thr_c;
+        best_v = thr_v;
+      }
     }
   }
+
+  return {.cost = best_c, .vtx = best_v};
+}
+
+void UpdateNeighborDistance(int target, int weight, int global_cost, int l_start, int l_count,
+                            std::vector<Cost> &local_dist, const std::vector<char> &local_visited) {
+  if (target >= l_start && target < l_start + l_count) {
+    int local_idx = target - l_start;
+    if (local_visited[static_cast<size_t>(local_idx)] == 0) {
+      int new_dist = global_cost + weight;
+      std::atomic_ref<int> target_ref(local_dist[static_cast<size_t>(local_idx)]);
+
+      int old_dist = target_ref.load(std::memory_order_relaxed);
+      while (new_dist < old_dist) {
+        if (target_ref.compare_exchange_weak(old_dist, new_dist, std::memory_order_relaxed)) {
+          break;
+        }
+      }
+    }
+  }
+}
+
+void RelaxNeighbors(const std::vector<std::pair<int, int>> &neighbors, const NodePayload &global, int l_start,
+                    int l_count, std::vector<Cost> &local_dist, const std::vector<char> &local_visited, int threads) {
+  const size_t sz = neighbors.size();
+#pragma omp parallel for num_threads(threads) default(none) \
+    shared(neighbors, sz, global, l_start, l_count, local_dist, local_visited)
+  for (size_t i = 0; i < sz; ++i) {
+    int target = neighbors[i].first;
+    int weight = neighbors[i].second;
+    UpdateNeighborDistance(target, weight, global.cost, l_start, l_count, local_dist, local_visited);
+  }
+}
+
+int64_t CalculateLocalSum(const std::vector<Cost> &local_dist, int l_count, int threads) {
+  int64_t local_sum = 0;
+#pragma omp parallel for num_threads(threads) default(none) reduction(+ : local_sum) shared(local_dist, l_count)
+  for (int i = 0; i < l_count; ++i) {
+    if (local_dist[static_cast<size_t>(i)] != kInf) {
+      local_sum += local_dist[static_cast<size_t>(i)];
+    }
+  }
+  return local_sum;
 }
 
 }  // namespace
@@ -55,190 +103,122 @@ NalitovDDijkstrasAlgorithmALL::NalitovDDijkstrasAlgorithmALL(const InType &in) {
 
 bool NalitovDDijkstrasAlgorithmALL::ValidationImpl() {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
-  if (rank_ != 0) {
-    return true;
+  int is_valid = 1;
+
+  if (rank_ == 0) {
+    const auto &in = GetInput();
+    if (in.n <= 0 || in.n > 10000 || in.source < 0 || in.source >= in.n) {
+      is_valid = 0;
+    } else {
+      for (const auto &a : in.arcs) {
+        if (a.from < 0 || a.to < 0 || a.from >= in.n || a.to >= in.n || a.weight < 0) {
+          is_valid = 0;
+          break;
+        }
+      }
+    }
   }
-  if (GetOutput() != 0) {
-    return false;
-  }
-  const InType &in = GetInput();
-  constexpr int kMaxVertices = 10000;
-  if (in.n <= 0 || in.n > kMaxVertices) {
-    return false;
-  }
-  if (in.source < 0 || in.source >= in.n) {
-    return false;
-  }
-  const auto arc_ok = [&in](const Arc &a) {
-    return a.from >= 0 && a.to >= 0 && a.from < in.n && a.to < in.n && a.weight >= 0;
-  };
-  return std::ranges::all_of(in.arcs, arc_ok);
+
+  MPI_Bcast(&is_valid, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  return is_valid == 1;
 }
 
 bool NalitovDDijkstrasAlgorithmALL::PreProcessingImpl() {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
   MPI_Comm_size(MPI_COMM_WORLD, &size_);
 
-  std::array<int, 3> header{};
+  std::array<int, 3> meta{};
   if (rank_ == 0) {
-    const InType &in = GetInput();
-    header[0] = in.n;
-    header[1] = in.source;
-    header[2] = static_cast<int>(in.arcs.size());
+    meta[0] = GetInput().n;
+    meta[1] = GetInput().source;
+    meta[2] = static_cast<int>(GetInput().arcs.size());
   }
-  MPI_Bcast(header.data(), 3, MPI_INT, 0, MPI_COMM_WORLD);
-  n_ = header[0];
-  source_ = header[1];
-  const int arc_count = header[2];
+  MPI_Bcast(meta.data(), 3, MPI_INT, 0, MPI_COMM_WORLD);
 
-  if (n_ <= 0) {
-    return false;
-  }
+  n_ = meta[0];
+  source_ = meta[1];
+  int arc_count = meta[2];
 
-  std::vector<int> arc_buf(static_cast<std::size_t>(arc_count) * 3);
+  std::vector<int> arc_buf(static_cast<size_t>(arc_count) * 3);
   if (rank_ == 0) {
-    const InType &in = GetInput();
     for (int i = 0; i < arc_count; ++i) {
-      const Arc &a = in.arcs[static_cast<std::size_t>(i)];
-      arc_buf[static_cast<std::size_t>(i) * 3 + 0] = a.from;
-      arc_buf[static_cast<std::size_t>(i) * 3 + 1] = a.to;
-      arc_buf[static_cast<std::size_t>(i) * 3 + 2] = static_cast<int>(a.weight);
+      size_t idx = static_cast<size_t>(i) * 3;
+      arc_buf[idx + 0] = GetInput().arcs[i].from;
+      arc_buf[idx + 1] = GetInput().arcs[i].to;
+      arc_buf[idx + 2] = GetInput().arcs[i].weight;
     }
   }
   if (arc_count > 0) {
     MPI_Bcast(arc_buf.data(), arc_count * 3, MPI_INT, 0, MPI_COMM_WORLD);
   }
 
-  graph_.assign(static_cast<std::size_t>(n_), {});
+  graph_.assign(n_, {});
   for (int i = 0; i < arc_count; ++i) {
-    const int from = arc_buf[static_cast<std::size_t>(i) * 3 + 0];
-    const int to = arc_buf[static_cast<std::size_t>(i) * 3 + 1];
-    const int weight = arc_buf[static_cast<std::size_t>(i) * 3 + 2];
-    graph_[static_cast<std::size_t>(from)].emplace_back(static_cast<NodeId>(to), static_cast<Cost>(weight));
+    size_t idx = static_cast<size_t>(i) * 3;
+    graph_[static_cast<size_t>(arc_buf[idx])].emplace_back(arc_buf[idx + 1], arc_buf[idx + 2]);
   }
-
-  dist_.assign(static_cast<std::size_t>(n_), kInf);
-  visited_.assign(static_cast<std::size_t>(n_), 0);
-  dist_[static_cast<std::size_t>(source_)] = 0;
 
   const int base = n_ / size_;
   const int rem = n_ % size_;
-  local_start_ = rank_ * base + std::min(rank_, rem);
+  local_start_ = (rank_ * base) + std::min(rank_, rem);
   local_count_ = base + (rank_ < rem ? 1 : 0);
 
-  GetOutput() = 0;
+  local_dist_.assign(local_count_, kInf);
+  local_visited_.assign(local_count_, 0);
+
+  if (source_ >= local_start_ && source_ < local_start_ + local_count_) {
+    local_dist_[source_ - local_start_] = 0;
+  }
+
   return true;
 }
 
 bool NalitovDDijkstrasAlgorithmALL::RunImpl() {
-  if (static_cast<int>(graph_.size()) != n_) {
-    return false;
-  }
+  const int threads = omp_get_max_threads();
+  const int l_start = local_start_;
+  const int l_count = local_count_;
+  const int n_total = n_;
 
-  MPI_Op min_dist_op = MPI_OP_NULL;
-  MPI_Op_create(reinterpret_cast<MPI_User_function *>(
-                    static_cast<void (*)(void *, void *, const int *, MPI_Datatype *)>(MinDistVertexOp)),
-                /*commute=*/1, &min_dist_op);
+  bool all_done = false;
 
-  for (int step = 0; step < n_; ++step) {
-    Cost proc_best_cost = kInf;
-    NodeId proc_best_vtx = -1;
+  for (int step = 0; step < n_total; ++step) {
+    NodePayload local = FindLocalMin(local_dist_, local_visited_, l_start, l_count, threads);
 
-#pragma omp parallel default(none) shared(proc_best_cost, proc_best_vtx)
-    {
-      Cost thr_cost = kInf;
-      NodeId thr_vtx = -1;
+    NodePayload global{};
+    MPI_Allreduce(&local, &global, 1, MPI_2INT, MPI_MINLOC, MPI_COMM_WORLD);
 
-#pragma omp for nowait schedule(static)
-      for (int vi = local_start_; vi < local_start_ + local_count_; ++vi) {
-        if (visited_[static_cast<std::size_t>(vi)] != 0) {
-          continue;
-        }
-        const Cost d = dist_[static_cast<std::size_t>(vi)];
-        const bool better = d < thr_cost;
-        const bool tie = (d == thr_cost) && (thr_vtx == -1 || vi < thr_vtx);
-        if (better || tie) {
-          thr_cost = d;
-          thr_vtx = vi;
-        }
-      }
-
-#pragma omp critical
-      {
-        const bool better = thr_cost < proc_best_cost;
-        const bool tie =
-            (thr_cost == proc_best_cost) && (thr_vtx != -1) && (proc_best_vtx == -1 || thr_vtx < proc_best_vtx);
-        if (better || tie) {
-          proc_best_cost = thr_cost;
-          proc_best_vtx = thr_vtx;
-        }
-      }
+    if (global.vtx == -1 || global.cost == kInf) {
+      all_done = true;
     }
 
-    std::array<int, 2> local_pair = {static_cast<int>(proc_best_cost), static_cast<int>(proc_best_vtx)};
-    std::array<int, 2> global_pair = {static_cast<int>(kInf), -1};
-    MPI_Allreduce(local_pair.data(), global_pair.data(), 2, MPI_INT, min_dist_op, MPI_COMM_WORLD);
-
-    const NodeId pivot = static_cast<NodeId>(global_pair[1]);
-    if (pivot == -1) {
-      break;
-    }
-
-    visited_[static_cast<std::size_t>(pivot)] = 1;
-
-    const Cost d_pivot = dist_[static_cast<std::size_t>(pivot)];
-    if (d_pivot == kInf) {
-      break;
-    }
-
-    const auto &nbrs = graph_[static_cast<std::size_t>(pivot)];
-    const auto nbr_count = static_cast<int>(nbrs.size());
-
-#pragma omp parallel for default(none) shared(nbrs, d_pivot) schedule(static)
-    for (int ei = 0; ei < nbr_count; ++ei) {
-      const NodeId tgt = nbrs[static_cast<std::size_t>(ei)].first;
-      const Cost w = nbrs[static_cast<std::size_t>(ei)].second;
-      if (visited_[static_cast<std::size_t>(tgt)] != 0) {
-        continue;
+    if (!all_done) {
+      if (global.vtx >= l_start && global.vtx < l_start + l_count) {
+        local_visited_[static_cast<size_t>(global.vtx - l_start)] = 1;
       }
-      if (d_pivot > kInf - w) {
-        continue;
-      }
-      const Cost cand = d_pivot + w;
-#pragma omp critical
-      {
-        if (cand < dist_[static_cast<std::size_t>(tgt)]) {
-          dist_[static_cast<std::size_t>(tgt)] = cand;
-        }
-      }
+
+      RelaxNeighbors(graph_[static_cast<size_t>(global.vtx)], global, l_start, l_count, local_dist_, local_visited_,
+                     threads);
     }
   }
 
-  MPI_Op_free(&min_dist_op);
-
-  std::int64_t local_sum = 0;
-  for (int vi = local_start_; vi < local_start_ + local_count_; ++vi) {
-    const Cost d = dist_[static_cast<std::size_t>(vi)];
-    if (d == kInf) {
-      continue;
-    }
-    std::int64_t tmp = 0;
-    if (CheckedSum(local_sum, d, tmp)) {
-      local_sum = tmp;
-    }
-  }
-
-  std::int64_t global_sum = 0;
+  int64_t local_sum = CalculateLocalSum(local_dist_, l_count, threads);
+  int64_t global_sum = 0;
   MPI_Reduce(&local_sum, &global_sum, 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
 
   if (rank_ == 0) {
     GetOutput() = global_sum;
   }
+
   return true;
 }
 
 bool NalitovDDijkstrasAlgorithmALL::PostProcessingImpl() {
-  return rank_ != 0 || GetOutput() >= 0;
+  OutType result = GetOutput();
+  MPI_Bcast(&result, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
+  if (rank_ != 0) {
+    GetOutput() = result;
+  }
+  return true;
 }
 
 }  // namespace nalitov_d_dijkstras_algorithm
