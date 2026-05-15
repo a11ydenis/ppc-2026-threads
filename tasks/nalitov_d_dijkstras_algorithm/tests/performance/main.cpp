@@ -29,7 +29,7 @@ InType MakeStarFromZero(int n) {
 }  // namespace
 
 class NalitovDDijkstrasAlgorithmPerfTests : public ppc::util::BaseRunPerfTests<InType, OutType> {
-  static constexpr int kGraphSize = 150;
+  static constexpr int kGraphSize = 10000;
   InType input_data_{};
   OutType expected_output_{};
 
